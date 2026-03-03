@@ -5,36 +5,43 @@
 
 Bundler.require
 
+require "httparty"
 require "scraperwiki"
-require "mechanize"
 
 class Scraper
+  BASE_URL = "https://pdonline.frasercoast.qld.gov.au"
+
   def self.run
-    agent = Mechanize.new
+    date_scraped = Date.today.iso8601
+    count = 0
+    [
+      "#{BASE_URL}/app-results?q=submitted-this-month",
+      "#{BASE_URL}/app-results?q=submitted-last-month",
+    ].each do |url|
+      HTTParty.get(url).each do |a|
+        id = a['uniqueId']
+        address = a["property"].to_s.gsub(/\s+Qld\s+/, " QLD ").strip
+        council_reference = a["applicationId"]
+        date_received = Date.parse(a["submitted"]) unless a["submitted"].to_s.empty?
 
-    # Read in a page
-    page = agent.get("https://example.com")
-
-    # Find something on the page using css selectors
-    page.search("h1").each do |h1|
-      value = h1.text.strip
-      # Write out to the sqlite database using scraperwiki library
-      ScraperWiki.save_sqlite(["name"], { "name" => value })
+        record = {
+          "council_reference" => council_reference,
+          "address" => address,
+          "description" => a["description"].strip,
+          "info_url" => "#{BASE_URL}/#/applications/details?id=#{id}&applicationId=#{council_reference}",
+          "date_scraped" => date_scraped,
+          "date_received" => date_received&.iso8601,
+        }
+        puts "Saving #{council_reference} - #{address}"
+        ScraperWiki.save_sqlite(["council_reference"], record)
+        puts "RECORD: #{record.inspect}" if ENV['DEBUG']
+        count += 1
+      end
     end
-
-    # An arbitrary query against the database
-    rows = ScraperWiki.select("rowid AS id, name FROM data ORDER BY rowid desc LIMIT 3")
-    rows.each do |row|
-      puts "#{row['id']}: #{row['name']}"
-    end
+    puts "",
+         "Found #{count} records."
   end
 end
 
 # Run the scraper whilst allowing this file to be required in tests without auto-execution
 Scraper.run if __FILE__ == $PROGRAM_NAME
-
-# You don't have to do things with the Mechanize or ScraperWiki libraries.
-# You can use whatever gems you want: https://morph.io/documentation/ruby
-# All that matters is that your final data is written to an SQLite database
-# called "data.sqlite" in the current working directory which has at least a table
-# called "data".
